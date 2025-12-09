@@ -18,6 +18,7 @@ st.set_page_config(
 # --- CSS for Professional Look ---
 st.markdown("""
 <style>
+    /* Metric Cards (Top Row) */
     .metric-card {
         background-color: #0e1117;
         border: 1px solid #30333d;
@@ -27,11 +28,13 @@ st.markdown("""
     }
     .metric-card * { color: white !important; }
     
+    /* Risk Levels */
     .risk-stable { color: #21c354 !important; font-weight: bold; }     /* Green */
     .risk-technical { color: #ffe600 !important; font-weight: bold; } /* Yellow */
     .risk-soft { color: #ffa421 !important; font-weight: bold; }      /* Orange */
     .risk-hard { color: #ff4b4b !important; font-weight: bold; }      /* Red */
     
+    /* History Cards (Hall of Panic) */
     .history-card {
         background-color: #262730;
         border: 1px solid #41444e;
@@ -44,12 +47,17 @@ st.markdown("""
     }
     .history-card a { color: #4DA6FF !important; }
     
+    /* Education Section Cards */
     .edu-section {
         background-color: #1e2127;
         padding: 20px;
         border-radius: 10px;
         margin-bottom: 20px;
         border-left: 5px solid #4DA6FF;
+    }
+    /* FIX: Force text inside Education cards to be white */
+    .edu-section h3, .edu-section p, .edu-section strong, .edu-section li {
+        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -256,7 +264,7 @@ if page == "Live Dashboard":
                 border_color = "#ff4b4b" if event['panic_score'] >= 4 else "#ffa421" if event['panic_score'] >= 3 else "#21c354"
                 st.markdown(f"""
                 <div class="history-card" style="border-left: 5px solid {border_color}">
-                    <h4>{event['panic_icon']} {event['event']} <span style="font-size:0.8em; color:#bbb; float:right">{event['date']}</span></h4>
+                    <h4>{event['event']} <span style="font-size:0.8em; color:#bbb; float:right">{event['date']}</span></h4>
                     <p><i>"{event['vibe']}"</i></p>
                     <p>{event['description']}</p>
                     <hr style="margin: 5px 0; border-color: #444;">
