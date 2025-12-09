@@ -105,7 +105,7 @@ DEPEG_EVENTS = [
 # --- Helper Functions ---
 
 @st.cache_data(ttl=3600)
-def fetch_crypto_data(coin='USDT', days=90):
+def fetch_crypto_data(coin='USDT', days=365): # Default to 365 days to support 1y volatility
     base_url = "https://min-api.cryptocompare.com/data/v2/histohour"
     all_data = []
     current_time = int(datetime.now().timestamp())
@@ -163,15 +163,30 @@ def categorize_risk_row(row):
 def calculate_metrics(df, contamination=0.01):
     data = df.copy()
     data['Returns'] = data['Close'].pct_change()
+    
+    # Calculate Rolling Volatility Windows
+    # Hours in periods: 24h=24, 7d=168, 90d=2160, 1y=8760
     data['Volatility_24h'] = data['Returns'].rolling(window=24).std() * 100 
+    data['Volatility_7d'] = data['Returns'].rolling(window=24*7).std() * 100
+    data['Volatility_90d'] = data['Returns'].rolling(window=24*90).std() * 100
+    data['Volatility_1y'] = data['Returns'].rolling(window=24*365).std() * 100
+    
     data['Deviation'] = (data['Close'] - 1.0)
-    data = data.dropna()
+    
+    # Fill NaN values to avoid dropping useful recent data if history is short
+    # We use bfill() to backfill the first available volatility to the start, 
+    # or just fill with 0. Let's fill with 0 so it's clear data is missing rather than fake.
+    cols_to_fill = ['Volatility_7d', 'Volatility_90d', 'Volatility_1y']
+    data[cols_to_fill] = data[cols_to_fill].fillna(0)
+    
+    # We still need to drop rows where we can't calculate 24h volatility or features
+    # But now we keep the rows where longer term vol might be missing
+    data = data.dropna(subset=['Volatility_24h', 'Returns'])
     
     features = ['Close', 'Volatility_24h']
     model = IsolationForest(contamination=contamination, random_state=42)
     data['Anomaly'] = model.fit_predict(data[features])
     data['Is_Anomaly'] = data['Anomaly'] == -1
-    data['Volatility_7d'] = data['Returns'].rolling(window=24*7).std() * 100
     
     # --- NEW: Apply Risk Categories to the DataFrame ---
     data['Risk_Category'] = data.apply(categorize_risk_row, axis=1)
@@ -189,7 +204,7 @@ if page == "Live Dashboard":
     st.sidebar.header("Configuration")
     selected_coin = st.sidebar.selectbox("Select Stablecoin", ["USDT", "USDC"])
     st.sidebar.caption(f"Fetching real hourly data for {selected_coin} via CryptoCompare.")
-    days_to_fetch = st.sidebar.slider("Days to Analyze", 7, 365, 90)
+    days_to_fetch = st.sidebar.slider("Days to Analyze", 7, 730, 365) # Increased max days to support 1y vol
     contamination = st.sidebar.slider("ML Sensitivity", 0.001, 0.05, 0.01, format="%.3f")
     
     if st.sidebar.button("Force Refresh Data"):
@@ -243,19 +258,27 @@ if page == "Live Dashboard":
         
         with tab1:
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-                                subplot_titles=(f"{selected_coin} Price vs Peg", "Deviation (%)", "7-Day Volatility"),
+                                subplot_titles=(f"{selected_coin} Price vs Peg", "Deviation (%)", "Volatility Term Structure"),
                                 row_heights=[0.5, 0.25, 0.25])
             
+            # Row 1: Price
             fig.add_trace(go.Scatter(x=processed_df['Datetime'], y=processed_df['Close'], mode='lines', name='Price', line=dict(color='#1f77b4', width=1.5)), row=1, col=1)
             fig.add_hline(y=1.0, line_dash="dash", line_color="gray", row=1, col=1)
             
             anom = processed_df[processed_df['Is_Anomaly']]
             fig.add_trace(go.Scatter(x=anom['Datetime'], y=anom['Close'], mode='markers', name='ML Anomaly', marker=dict(color='red', size=6, symbol='x')), row=1, col=1)
             
+            # Row 2: Deviation
             fig.add_trace(go.Scatter(x=processed_df['Datetime'], y=processed_df['Close']-1, mode='lines', name='Deviation', fill='tozeroy', line=dict(color='#ff7f0e')), row=2, col=1)
-            fig.add_trace(go.Scatter(x=processed_df['Datetime'], y=processed_df['Volatility_7d'], mode='lines', name='Vol (7d)', line=dict(color='#9467bd')), row=3, col=1)
             
-            fig.update_layout(height=700, template="plotly_dark", showlegend=False, margin=dict(l=20, r=20, t=40, b=20))
+            # Row 3: Volatility (Multi-Timeframe)
+            fig.add_trace(go.Scatter(x=processed_df['Datetime'], y=processed_df['Volatility_24h'], mode='lines', name='24h Vol', line=dict(color='#9467bd', width=1)), row=3, col=1)
+            fig.add_trace(go.Scatter(x=processed_df['Datetime'], y=processed_df['Volatility_7d'], mode='lines', name='7d Vol', line=dict(color='#2ca02c', width=1)), row=3, col=1)
+            # Only plot longer volatilities if data exists (not mostly 0s)
+            if processed_df['Volatility_90d'].sum() > 0:
+                fig.add_trace(go.Scatter(x=processed_df['Datetime'], y=processed_df['Volatility_90d'], mode='lines', name='90d Vol', line=dict(color='#d62728', width=1, dash='dot')), row=3, col=1)
+            
+            fig.update_layout(height=700, template="plotly_dark", showlegend=True, margin=dict(l=20, r=20, t=40, b=20))
             st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
@@ -279,7 +302,7 @@ if page == "Live Dashboard":
         with tab3:
             # Highlight the Risk Category column for clarity
             st.dataframe(
-                processed_df[['Datetime', 'Close', 'Risk_Category', 'Is_Anomaly', 'Deviation', 'Volatility_24h']], 
+                processed_df[['Datetime', 'Close', 'Risk_Category', 'Is_Anomaly', 'Deviation', 'Volatility_24h', 'Volatility_7d', 'Volatility_90d', 'Volatility_1y']], 
                 use_container_width=True
             )
             st.download_button(f"Download {selected_coin} CSV", processed_df.to_csv(index=False).encode('utf-8'), f"{selected_coin.lower()}_data.csv", "text/csv")
