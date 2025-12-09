@@ -5,7 +5,7 @@ from datetime import datetime
 import time
 import plotly.graph_objects as go
 import numpy as np
-from sklearn.ensemble import IsolationForest # Added for ML Anomaly Detection
+from sklearn.ensemble import IsolationForest 
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -78,47 +78,35 @@ def fetch_crypto_data(coin='USDT', days=365):
     df['time'] = pd.to_datetime(df['time'], unit='s')
     return df
 
-def calculate_risk_level(std_dev):
-    if std_dev < 0.001:
-        return "Low", "green", "Price is tightly pegged. Standard Deviation < 0.1%"
-    elif std_dev < 0.005:
-        return "Moderate", "orange", "Minor volatility detected. Standard Deviation < 0.5%"
-    else:
-        return "High", "red", "Significant de-pegging events detected. Standard Deviation > 0.5%"
-
-def classify_peg_status(price):
-    """Classifies the stability of the peg based on price."""
-    # Absolute deviation from $1.00
+def get_peg_status_and_color(price):
+    """
+    Determines the visual status of the peg based on the current price.
+    Returns: (Label, ColorHex)
+    """
     diff = abs(price - 1.0)
     
     if diff < 0.002: # 0.998 - 1.002
-        return "Stable"
+        return "Stable", "#008000" # Yahoo Green
     elif diff < 0.005: # 0.995 - 0.998 OR 1.002 - 1.005
-        return "Technical Depeg" 
+        return "Technical Depeg", "#FFD700" # Gold/Yellow
     elif diff < 0.02: # 0.98 - 0.995
-        return "Soft Depeg"
+        return "Soft Depeg", "#FFA500" # Orange
     else: # < 0.98 or > 1.02
-        return "Hard Depeg"
+        return "Hard Depeg", "#FF0000" # Red
+
+def classify_peg_status(price):
+    """Classifies for dataframe usage (text only)."""
+    diff = abs(price - 1.0)
+    if diff < 0.002: return "Stable"
+    elif diff < 0.005: return "Technical Depeg" 
+    elif diff < 0.02: return "Soft Depeg"
+    else: return "Hard Depeg"
 
 def detect_anomalies_ml(df):
-    """
-    Detects anomalies using the Isolation Forest algorithm (Machine Learning).
-    This is an unsupervised learning method that isolates anomalies 
-    instead of profiling normal data points.
-    """
-    # Prepare data for Scikit-Learn (Needs 2D array)
+    """Isolation Forest for Anomaly Detection"""
     X = df[['close']].values
-    
-    # Initialize Isolation Forest
-    # contamination='auto' allows the model to determine the % of outliers, 
-    # or we can set it to e.g., 0.01 (1%) if we want to be strict.
     iso_forest = IsolationForest(contamination=0.01, random_state=42)
-    
-    # Fit and Predict
-    # Returns -1 for outliers and 1 for inliers.
     preds = iso_forest.fit_predict(X)
-    
-    # Convert to boolean (True if Anomaly)
     df['Is Anomaly'] = preds == -1
     return df
 
@@ -126,16 +114,14 @@ def process_advanced_metrics(df):
     """Adds volatility metrics and classifications."""
     df = df.sort_values('time').reset_index(drop=True)
     
-    # 1. Volatility Metrics (Rolling Standard Deviations)
+    # 1. Volatility Metrics
     df['Hourly Change %'] = df['close'].pct_change() * 100
     df['Daily Volatility (24h)'] = df['close'].rolling(window=24).std()
-    df['Weekly Volatility (7d)'] = df['close'].rolling(window=24*7).std()
-    df['Monthly Volatility (30d)'] = df['close'].rolling(window=24*30).std()
     
     # 2. Stability Classification
     df['Peg Status'] = df['close'].apply(classify_peg_status)
     
-    # 3. Anomaly Detection (Now using ML)
+    # 3. Anomaly Detection
     df = detect_anomalies_ml(df)
     
     return df
@@ -149,7 +135,6 @@ st.markdown("Monitor the stability of major stablecoins against the USD.")
 with st.sidebar:
     st.header("Settings")
     selected_coin = st.selectbox("Select Stablecoin", ["USDT", "USDC"])
-    # UPDATED: Increased max_value to 2000 days (~5.5 years)
     selected_days = st.slider("Timeframe (Days)", min_value=7, max_value=2000, value=30)
     st.caption(f"Showing data for the last {selected_days} days.")
     
@@ -162,7 +147,6 @@ with st.spinner(f"Loading data for {selected_coin}..."):
     raw_df = fetch_crypto_data(selected_coin, selected_days)
 
 if not raw_df.empty:
-    # Process Advanced Metrics
     df = process_advanced_metrics(raw_df)
     
     # Create Tabs
@@ -170,10 +154,11 @@ if not raw_df.empty:
 
     # --- TAB 1: Dashboard ---
     with tab1:
-        # Statistics & Risk
+        # Metrics Row
         current_price = df['close'].iloc[-1]
-        price_std = df['close'].std()
-        risk_label, risk_color, risk_desc = calculate_risk_level(price_std)
+        
+        # Determine Status Label and Color
+        status_label, status_color = get_peg_status_and_color(current_price)
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -183,33 +168,42 @@ if not raw_df.empty:
         with col3:
             st.metric("Period Low", f"${df['low'].min():.4f}")
         with col4:
-            st.markdown(f"**Peg Risk Level**")
-            st.markdown(f":{risk_color}[**{risk_label}**]", help=risk_desc)
+            # Custom HTML to match st.metric size (36px) and styling
+            st.markdown(f"""
+            <div>
+                <div style="font-size: 14px; opacity: 0.6; margin-bottom: 0px;">Peg Risk Level</div>
+                <div style="font-size: 36px; font-weight: 600; color: {status_color}; line-height: 1.2;">
+                    {status_label}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        # Charts
+        # Chart 1: Price Action
         st.subheader(f"{selected_coin} / USD Price Action")
         
         fig = go.Figure()
         
-        # 1. Main Price Line
+        # Main Price Line (Yahoo Style: Thin line with light fill)
         fig.add_trace(go.Scatter(
             x=df['time'], 
-            y=df['close'],
-            mode='lines',
-            name='Price',
-            line=dict(color='#1f77b4', width=2)
+            y=df['close'], 
+            mode='lines', 
+            name='Price', 
+            line=dict(color='#008000', width=1.5), # Standard Finance Green
+            fill='tozeroy', 
+            fillcolor='rgba(0, 128, 0, 0.05)' # Very subtle green tint
         ))
         
-        # 2. The Peg Line
+        # Peg Line
         fig.add_trace(go.Scatter(
-            x=[df['time'].iloc[0], df['time'].iloc[-1]],
-            y=[1.0, 1.0],
-            mode='lines',
-            name='Peg ($1.00)',
+            x=[df['time'].iloc[0], df['time'].iloc[-1]], 
+            y=[1.0, 1.0], 
+            mode='lines', 
+            name='Peg ($1.00)', 
             line=dict(color='gray', width=1, dash='dash')
         ))
 
-        # 3. Anomaly Markers (Using ML results)
+        # ML Anomalies
         anomalies = df[df['Is Anomaly'] == True]
         if not anomalies.empty:
             fig.add_trace(go.Scatter(
@@ -217,41 +211,91 @@ if not raw_df.empty:
                 y=anomalies['close'],
                 mode='markers',
                 name='ML Detected Anomaly',
-                marker=dict(color='orange', size=6, symbol='circle-open', line=dict(width=2)),
+                marker=dict(color='#FFA500', size=5, symbol='circle-open', line=dict(width=2)),
                 hovertemplate="<b>ML Anomaly</b><br>Price: $%{y:.4f}<br>Date: %{x}<extra></extra>"
             ))
         
-        # Improved Scaling logic
+        # Scaling
         y_min = np.percentile(df['close'], 1)  
         y_max = np.percentile(df['close'], 99) 
         y_range_min = min(0.998, y_min - 0.001)
         y_range_max = max(1.002, y_max + 0.001)
 
-        # UPDATED: Added Range Slider and better axis configuration
+        # Yahoo Finance Style Layout
         fig.update_layout(
-            height=600,
-            xaxis_title="Time",
-            yaxis_title="Price (USD)",
+            height=550,
+            template="plotly_white", # Clean white background
+            hovermode="x unified",   # Shared hover
+            
+            # X-Axis: Time buttons and Crosshairs
+            xaxis=dict(
+                type="date",
+                showgrid=True, 
+                gridcolor='#f0f0f0', # Subtle grid
+                showspikes=True, spikethickness=1, spikecolor='#999999', spikemode='across', # Crosshairs
+                rangeslider=dict(visible=False), # Hide the bulky slider, use buttons instead
+                rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1m", step="month", stepmode="backward"),
+                        dict(count=3, label="3m", step="month", stepmode="backward"),
+                        dict(count=6, label="6m", step="month", stepmode="backward"),
+                        dict(count=1, label="YTD", step="year", stepmode="todate"),
+                        dict(count=1, label="1y", step="year", stepmode="backward"),
+                        dict(step="all")
+                    ]),
+                    bgcolor="#f8f9fa",
+                    activecolor="#e2e6ea",
+                    font=dict(color="black", size=11)
+                )
+            ),
+            
+            # Y-Axis: Right-aligned, formatted currency
+            yaxis=dict(
+                tickformat=".4f", 
+                range=[y_range_min, y_range_max], 
+                fixedrange=False,
+                side="right", # Yahoo style: Axis on right
+                showgrid=True, 
+                gridcolor='#f0f0f0',
+                showspikes=True, spikethickness=1, spikecolor='#999999', spikemode='across', # Crosshairs
+            ),
+            
+            margin=dict(l=10, r=50, t=30, b=30),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Chart 2: Volatility
+        st.subheader("Volatility (Rolling 24h Standard Deviation)")
+        
+        fig_vol = go.Figure()
+        fig_vol.add_trace(go.Scatter(
+            x=df['time'], 
+            y=df['Daily Volatility (24h)'],
+            mode='lines',
+            name='24h Volatility',
+            line=dict(color='#7209b7', width=1.5),
+            fill='tozeroy',
+            fillcolor='rgba(114, 9, 183, 0.1)'
+        ))
+        
+        fig_vol.update_layout(
+            height=300,
+            template="plotly_white",
             hovermode="x unified",
             xaxis=dict(
-                rangeslider=dict(visible=True), # Yahoo Finance style slider
-                type="date"
+                type="date", 
+                showgrid=True, gridcolor='#f0f0f0',
+                showspikes=True, spikethickness=1, spikecolor='#999999', spikemode='across'
             ),
             yaxis=dict(
-                tickformat=".4f",
-                range=[y_range_min, y_range_max],
-                fixedrange=False # Allow vertical zooming if needed
+                tickformat=".5f",
+                side="right", # Axis on right
+                showgrid=True, gridcolor='#f0f0f0',
             ),
-            margin=dict(l=0, r=0, t=30, b=0),
-            legend=dict(
-                yanchor="top",
-                y=0.99,
-                xanchor="left",
-                x=0.01
-            )
+            margin=dict(l=10, r=50, t=30, b=0),
         )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_vol, use_container_width=True)
 
     # --- TAB 2: Hall of Pain (History) ---
     with tab2:
