@@ -150,10 +150,11 @@ with st.sidebar:
     # Candlestick option removed as requested
     show_bb = st.checkbox("Show Bollinger Bands (2σ)", value=True, help="Visualizes volatility expansion/contraction.")
     
+    # Uncle's Fix: Default to 730 days (2 years) so the "1y" and "YTD" buttons actually work.
     selected_days = st.select_slider(
-        "Lookback Horizon",
-        options=[7, 30, 90, 180, 365, 730, 2000],
-        value=30,
+        "Data Feed History",
+        options=[30, 90, 180, 365, 730, 2000],
+        value=730, 
         format_func=lambda x: f"{x} Days"
     )
     
@@ -280,11 +281,16 @@ if not raw_df.empty:
         ), row=2, col=1)
 
         # Layout
-        y_min = np.percentile(df['close'], 1)  
-        y_max = np.percentile(df['close'], 99) 
-        # Add buffer for bands
+        # Use full data range for Y-axis to ensure crashes are visible
+        y_min = df['close'].min()
+        y_max = df['close'].max()
+        
         y_range_min = min(0.998, y_min - 0.002)
         y_range_max = max(1.002, y_max + 0.002)
+
+        # Define default zoom range (last 30 days) to prevent crowding on load
+        default_zoom_start = df['time'].iloc[-1] - pd.Timedelta(days=30)
+        default_zoom_end = df['time'].iloc[-1]
 
         fig.update_layout(
             height=650,
@@ -295,10 +301,24 @@ if not raw_df.empty:
             dragmode='pan'
         )
 
-        # X-Axis
+        # X-Axis configuration
         fig.update_xaxes(
+            # Force the chart to START zoomed in, but allow panning back to the full 2 years
+            range=[default_zoom_start, default_zoom_end],
+            
             showgrid=True, gridwidth=1, gridcolor='#E5E5E5',
             showspikes=True, spikethickness=1, spikecolor='#888888', spikemode='across',
+            
+            # Intelligent Date Formatting (The "Yahoo" Polish)
+            tickformatstops=[
+                dict(dtickrange=[None, 3600000], value="%H:%M"), # Hour
+                dict(dtickrange=[3600000, 86400000], value="%d %b"), # Day
+                dict(dtickrange=[86400000, 604800000], value="%d %b"), # Week
+                dict(dtickrange=[604800000, "M1"], value="%d %b"), # Month
+                dict(dtickrange=["M1", "M12"], value="%b '%y"), # Year
+                dict(dtickrange=["M12", None], value="%Y") # Multi-Year
+            ],
+
             rangeselector=dict(
                 buttons=list([
                     dict(count=1, label="1m", step="month", stepmode="backward"),
@@ -314,7 +334,7 @@ if not raw_df.empty:
             ),
             row=1, col=1
         )
-        fig.update_xaxes(showgrid=False, row=2, col=1)
+        fig.update_xaxes(showgrid=False, row=2, col=1, range=[default_zoom_start, default_zoom_end])
 
         # Y-Axes
         fig.update_yaxes(
