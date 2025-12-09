@@ -85,6 +85,59 @@ def calculate_risk_level(std_dev):
     else:
         return "High", "red", "Significant de-pegging events detected. Standard Deviation > 0.5%"
 
+def classify_peg_status(price):
+    """Classifies the stability of the peg based on price."""
+    # Absolute deviation from $1.00
+    diff = abs(price - 1.0)
+    
+    if diff < 0.002: # 0.998 - 1.002
+        return "Stable"
+    elif diff < 0.005: # 0.995 - 0.998 OR 1.002 - 1.005
+        return "Technical Depeg" 
+    elif diff < 0.02: # 0.98 - 0.995
+        return "Soft Depeg"
+    else: # < 0.98 or > 1.02
+        return "Hard Depeg"
+
+def detect_anomalies(df):
+    """
+    Detects anomalies using a Rolling Z-Score.
+    An 'Anomaly' is defined as a price point > 3 standard deviations 
+    away from the 24-hour moving average.
+    """
+    # Calculate Rolling Stats (24 hour window)
+    df['rolling_mean'] = df['close'].rolling(window=24).mean()
+    df['rolling_std'] = df['close'].rolling(window=24).std()
+    
+    # Calculate Z-Score: (Price - Mean) / StdDev
+    # We use a small epsilon to avoid division by zero
+    df['z_score'] = (df['close'] - df['rolling_mean']) / (df['rolling_std'] + 1e-8)
+    
+    # Flag Anomalies (|Z-Score| > 3)
+    df['Is Anomaly'] = abs(df['z_score']) > 3
+    return df
+
+def process_advanced_metrics(df):
+    """Adds volatility metrics and classifications."""
+    df = df.sort_values('time').reset_index(drop=True)
+    
+    # 1. Volatility Metrics (Rolling Standard Deviations)
+    # We multiply by 100 to display as percentage if needed, but keeping raw for calculation is often safer.
+    # Here we perform rolling std dev of the *price*.
+    
+    df['Hourly Change %'] = df['close'].pct_change() * 100
+    df['Daily Volatility (24h)'] = df['close'].rolling(window=24).std()
+    df['Weekly Volatility (7d)'] = df['close'].rolling(window=24*7).std()
+    df['Monthly Volatility (30d)'] = df['close'].rolling(window=24*30).std()
+    
+    # 2. Stability Classification
+    df['Peg Status'] = df['close'].apply(classify_peg_status)
+    
+    # 3. Anomaly Detection
+    df = detect_anomalies(df)
+    
+    return df
+
 # --- Main App Layout ---
 
 st.title("Stablecoin Peg Monitor")
@@ -103,15 +156,18 @@ with st.sidebar:
 
 # Fetch Data
 with st.spinner(f"Loading data for {selected_coin}..."):
-    df = fetch_crypto_data(selected_coin, selected_days)
+    raw_df = fetch_crypto_data(selected_coin, selected_days)
 
-if not df.empty:
+if not raw_df.empty:
+    # Process Advanced Metrics
+    df = process_advanced_metrics(raw_df)
     
     # Create Tabs
-    tab1, tab2 = st.tabs(["Dashboard", "Stablecoin Mechanics"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "Hall of Pain (History)", "Raw Data & Analysis", "Stablecoin Mechanics"])
 
+    # --- TAB 1: Dashboard ---
     with tab1:
-        # --- Statistics & Risk ---
+        # Statistics & Risk
         current_price = df['close'].iloc[-1]
         price_std = df['close'].std()
         risk_label, risk_color, risk_desc = calculate_risk_level(price_std)
@@ -127,10 +183,10 @@ if not df.empty:
             st.markdown(f"**Peg Risk Level**")
             st.markdown(f":{risk_color}[**{risk_label}**]", help=risk_desc)
 
-        # --- Data Logic for Depegs ---
-        depegs = df[(df['low'] < 0.995) | (df['high'] > 1.005)].copy()
+        # Data Logic for Depegs (Legacy visual logic)
+        depegs_visual = df[(df['low'] < 0.995) | (df['high'] > 1.005)].copy()
 
-        # --- Charts ---
+        # Charts
         st.subheader(f"{selected_coin} / USD Price Action")
         
         fig = go.Figure()
@@ -153,15 +209,15 @@ if not df.empty:
             line=dict(color='gray', width=1, dash='dash')
         ))
 
-        # 3. Anomaly Markers (The "UX Upgrade")
-        if not depegs.empty:
+        # 3. Anomaly Markers
+        if not depegs_visual.empty:
             fig.add_trace(go.Scatter(
-                x=depegs['time'],
-                y=depegs['close'],
+                x=depegs_visual['time'],
+                y=depegs_visual['close'],
                 mode='markers',
-                name='De-peg Event',
+                name='Significant Deviation',
                 marker=dict(color='red', size=8, symbol='x'),
-                hovertemplate="<b>De-peg Event</b><br>Price: $%{y:.4f}<br>Date: %{x}<extra></extra>"
+                hovertemplate="<b>Deviation</b><br>Price: $%{y:.4f}<br>Date: %{x}<extra></extra>"
             ))
         
         # Improved Scaling logic
@@ -190,66 +246,195 @@ if not df.empty:
         
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- Hall of Pain (De-peg Events) ---
-        st.subheader("Hall of Pain: Significant Deviations")
-        st.markdown("Instances where the price deviated more than 0.5% from the peg.")
-        
-        if not depegs.empty:
-            depegs['Deviation'] = depegs.apply(lambda x: x['low'] if x['low'] < 0.995 else x['high'], axis=1)
-            depegs['Type'] = depegs.apply(lambda x: 'Drop' if x['low'] < 0.995 else 'Spike', axis=1)
-            
-            display_cols = depegs[['time', 'Type', 'Deviation', 'volumeto']]
-            
-            # Format dataframe for display
-            st.dataframe(
-                display_cols.sort_values('time', ascending=False),
-                column_config={
-                    "time": st.column_config.DatetimeColumn(
-                        "Date & Time",
-                        format="D MMM YYYY, h:mm a",
-                        step=60,
-                    ),
-                    "Type": "Event Type",
-                    "Deviation": st.column_config.NumberColumn(
-                        "Price Reached",
-                        format="$%.4f"
-                    ),
-                    "volumeto": st.column_config.NumberColumn(
-                        "Volume (USD)",
-                        format="$%.2f"
-                    )
-                },
-                use_container_width=True
-            )
-            
-            # Download Button (Recruiter Friendly)
-            csv = display_cols.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Download De-peg Report (CSV)",
-                data=csv,
-                file_name=f'{selected_coin}_depegs.csv',
-                mime='text/csv',
-            )
-
-        else:
-            st.info("No significant de-peg events (>0.5%) detected in this timeframe.")
-
-    # --- Educational Section (Tab 2) ---
+    # --- TAB 2: Hall of Pain (History) ---
     with tab2:
-        st.markdown("""
-        ### Understanding Stablecoin Pegs
+        st.header("The Hall of Pain: Historic De-pegs")
+        st.markdown("A museum of the most significant stablecoin failures and crises in history.")
+
+        # Event 1: Terra
+        st.subheader("1. The Terra (UST) Collapse")
+        st.markdown("**Date:** May 2022 | **Low:** $0.00")
+        col_hist1, col_hist2 = st.columns([2, 1])
+        with col_hist1:
+            st.markdown("""
+            * **The Cause:** UST was an *algorithmic* stablecoin with no real reserves. It relied on a code-based relationship with its sister token, LUNA. When large withdrawals drained the liquidity pool, the algorithm entered a "death spiral," printing trillions of LUNA tokens to try and save the peg, causing both assets to go to zero.
+            * **Who was affected:** Retail investors lost life savings ($40B+ wiped out). It triggered the bankruptcy of major crypto funds like **Three Arrows Capital**, **Celsius**, and **Voyager**.
+            """)
+        with col_hist2:
+            st.info("📉 **Impact:** Total ecosystem collapse. Triggered 'Crypto Winter' of 2022.")
+        st.markdown("[🔗 Read the post-mortem (Coindesk)](https://www.coindesk.com/learn/the-fall-of-terra-a-timeline-of-the-meteoric-rise-and-crash-of-ust-and-luna/)")
+        st.divider()
+
+        # Event 2: USDC / SVB
+        st.subheader("2. The Silicon Valley Bank Crisis (USDC)")
+        st.markdown("**Date:** March 2023 | **Low:** $0.87")
+        col_hist3, col_hist4 = st.columns([2, 1])
+        with col_hist3:
+            st.markdown("""
+            * **The Cause:** Circle (issuer of USDC) revealed that **$3.3 Billion** of its cash reserves were stuck in Silicon Valley Bank (SVB) when regulators seized the failed bank.
+            * **Who was affected:** Panic sellers who dumped USDC at $0.88-$0.90 lost 10%+ instantly. DeFi protocols like **DAI** (which is backed by USDC) also de-pegged.
+            * **The Fix:** The US Federal Reserve stepped in to guarantee all SVB deposits, restoring confidence.
+            """)
+        with col_hist4:
+            st.warning("⚠️ **Lesson:** Even 'safe' centralized coins have banking counterparty risk.")
+        st.markdown("[🔗 Read the story (The Guardian)](https://www.theguardian.com/technology/2023/mar/11/usd-coin-depeg-silicon-valley-bank-collapse)")
+        st.divider()
+
+        # Event 3: Iron Finance
+        st.subheader("3. Iron Finance (The 'Mark Cuban' Rug)")
+        st.markdown("**Date:** June 2021 | **Low:** $0.00")
+        col_hist5, col_hist6 = st.columns([2, 1])
+        with col_hist5:
+            st.markdown("""
+            * **The Cause:** A classic "bank run" on a partially-collateralized stablecoin. As the price of the collateral token (TITAN) fell, users panicked and redeemed IRON, creating a negative feedback loop.
+            * **Who was affected:** Billionaire **Mark Cuban** famously lost money in this trade, calling for regulation afterwards. The token fell from $65 to near zero in hours.
+            """)
+        with col_hist6:
+            st.error("📉 **Impact:** First major high-profile failure of the 'partial-collateral' model.")
+        st.markdown("[🔗 Read Mark Cuban's reaction (Decrypt)](https://decrypt.co/73810/mark-cuban-hit-apparent-defi-rug-pull)")
+
+    # --- TAB 3: Raw Data & Analysis ---
+    with tab3:
+        st.header("Advanced Data Analysis")
+        st.markdown("Filter, analyze, and download full hourly datasets including volatility metrics and anomaly detection.")
         
-        **USDT (Tether) & USDC (USD Coin)** are centralized stablecoins backed by reserves of fiat currency and cash equivalents.
+        # --- Filters ---
+        col_filter1, col_filter2 = st.columns(2)
         
-        * **The Peg:** Ideally, 1 token always equals $1.00.
-        * **De-pegging:** Occurs when market panic or liquidity issues cause the price to drift.
-        * **Arbitrage:** When price dips (e.g., $0.99), traders buy it to redeem for $1.00, pushing the price back up.
+        with col_filter1:
+            status_filter = st.multiselect(
+                "Filter by Stability Status",
+                options=df['Peg Status'].unique(),
+                default=df['Peg Status'].unique()
+            )
+            
+        with col_filter2:
+            anomaly_filter = st.checkbox("Show Anomalies Only (Statistical ML)", value=False)
+
+        # Apply Filters
+        filtered_df = df.copy()
+        if status_filter:
+            filtered_df = filtered_df[filtered_df['Peg Status'].isin(status_filter)]
         
-        **Risk Factors:**
-        1.  **Reserves:** Quality of assets backing the coin.
-        2.  **Liquidity:** Ability to process large redemptions instantly.
-        3.  **Regulatory:** Government actions affecting the issuer.
+        if anomaly_filter:
+            filtered_df = filtered_df[filtered_df['Is Anomaly'] == True]
+
+        # Display Summary Stats of Filtered Data
+        st.markdown(f"**Showing {len(filtered_df)} rows** out of {len(df)} total records.")
+
+        # --- Data Table ---
+        # Select and Rename columns for clean display
+        display_df = filtered_df[[
+            'time', 'close', 'high', 'low', 'volumeto', 
+            'Hourly Change %', 'Daily Volatility (24h)', 'Peg Status', 'Is Anomaly'
+        ]].sort_values('time', ascending=False)
+
+        st.dataframe(
+            display_df,
+            column_config={
+                "time": st.column_config.DatetimeColumn("Date & Time", format="D MMM YYYY, h:mm a"),
+                "close": st.column_config.NumberColumn("Close Price", format="$%.4f"),
+                "high": st.column_config.NumberColumn("High", format="$%.4f"),
+                "low": st.column_config.NumberColumn("Low", format="$%.4f"),
+                "volumeto": st.column_config.NumberColumn("Volume ($)", format="$%.0f"),
+                "Hourly Change %": st.column_config.NumberColumn("Change", format="%.4f%%"),
+                "Daily Volatility (24h)": st.column_config.NumberColumn("Volatility (24h)", format="%.5f"),
+            },
+            use_container_width=True,
+            height=600
+        )
+
+        # --- Download Button ---
+        csv_full = filtered_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Full Analysis (CSV)",
+            data=csv_full,
+            file_name=f'{selected_coin}_full_analysis.csv',
+            mime='text/csv',
+        )
+
+        st.info("""
+        **Methodology Notes:**
+        * **Volatility:** Calculated as the rolling standard deviation of the price over the specified window (24h, 7d, etc).
+        * **Peg Status:** 'Stable' (±0.2%), 'Technical Depeg' (±0.5%), 'Soft Depeg' (±2.0%), 'Hard Depeg' (>2.0%).
+        * **Anomaly (ML):** Detected using a Z-Score algorithm. Data points > 3 standard deviations from the 24h moving average are flagged.
         """)
+
+    # --- TAB 4: Mechanics ---
+    with tab4:
+        st.header("Stablecoin Mechanics 101")
+        
+        with st.expander("1. What are Stablecoins?", expanded=True):
+            st.markdown("""
+            **Stablecoins** are cryptocurrencies designed to minimize volatility by pegging their value to a stable asset, typically a fiat currency like the US Dollar (USD) or a commodity like gold.
+            
+            They solve the primary hurdle of crypto adoption: **volatility**. While Bitcoin can swing 10% in a day, stablecoins aim to stay at exactly $1.00, making them useful for payments, settlement, and preserving wealth.
+            
+            **The Three Main Types:**
+            * **Fiat-Collateralized:** Backed 1:1 by reserves of cash and cash equivalents (Treasury bills) held in a bank. (e.g., USDT, USDC).
+            * **Crypto-Collateralized:** Backed by other cryptocurrencies, often over-collateralized to account for volatility. (e.g., DAI).
+            * **Algorithmic:** No reserves. Uses code and market incentives to mint/burn tokens to maintain the peg. (e.g., TerraUSD - *Failed*).
+            """)
+
+        with st.expander("2. The Titans: USDT vs. USDC", expanded=True):
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                st.markdown("### USDT (Tether)")
+                st.markdown("""
+                * **Launched:** 2014 by Tether Limited.
+                * **Status:** The "First Mover." It is the most dominant stablecoin by market cap and volume.
+                * **Reputation:** Historically controversial regarding the transparency of its reserves, though it has improved reporting recently.
+                * **Use Case:** Deepest liquidity. Used primarily for trading and arbitrage on offshore exchanges.
+                """)
+                
+            with col_b:
+                st.markdown("### USDC (USD Coin)")
+                st.markdown("""
+                * **Launched:** 2018 by Centre (Circle & Coinbase).
+                * **Status:** The "Compliance King." Designed for regulated markets.
+                * **Reputation:** High transparency. Monthly audits are published, and reserves are held in US-regulated financial institutions.
+                * **Use Case:** DeFi collateral, corporate treasury, and institutional settlement.
+                """)
+
+        with st.expander("3. What is De-pegging?", expanded=False):
+            st.markdown("""
+            **De-pegging** occurs when a stablecoin's price deviates from its target value (usually $1.00).
+            
+            ### Types of De-pegging:
+            
+            1.  **Soft De-peg (Temporary):**
+                * *Example:* Price hits $0.995 or $1.005.
+                * *Cause:* Normal market fluctuations. Someone sells a large amount (dumping), temporarily exhausting the buy-side liquidity. Arbitrage bots usually fix this in seconds.
+                
+            2.  **Structural De-peg (Crisis):**
+                * *Example:* Price drops to $0.88 (USDC in March 2023).
+                * *Cause:* Fundamental fear that the backing reserves are missing or inaccessible. For USDC, this happened when Silicon Valley Bank collapsed, freezing $3.3B of Circle's reserves.
+                
+            3.  **Algorithmic Death Spiral (Collapse):**
+                * *Example:* Price drops to $0.00 (TerraUSD in May 2022).
+                * *Cause:* Loss of confidence in the algorithm. Once the peg breaks, the mechanism to fix it actually creates hyperinflation of the sister token (LUNA), driving value to zero.
+            """)
+
+        with st.expander("4. How De-pegging Affects the Market", expanded=False):
+            st.markdown("""
+            When a major stablecoin wobbles, the ripple effects are massive:
+            
+            * **Arbitrage:** Traders rush to buy the coin at a discount (e.g., $0.98) hoping to redeem it for $1.00 later. This buying pressure often helps restore the peg.
+            * **Liquidity Crunch:** If traders fear a total collapse, they flee to "safety" (Bitcoin or Fiat), draining liquidity from DeFi pools.
+            * **Contagion:** Many crypto loans use stablecoins as collateral. If the price drops, these loans get liquidated, causing cascading sell-offs across the entire market (ETH, BTC).
+            * **Flight to Quality:** During the USDC de-peg, funds flowed massively into USDT. During USDT FUD (fear, uncertainty, doubt), funds flow to USDC.
+            """)
+
+        with st.expander("5. Who Cares? (Institutional Relevance)", expanded=False):
+            st.markdown("""
+            Why do fintechs and institutions monitor this data?
+            
+            * **High-Frequency Traders (HFT):** They profit from the millisecond discrepancies between $0.9999 and $1.0001.
+            * **Market Makers:** They provide liquidity to exchanges. If a stablecoin de-pegs, their inventory loses value, so they need real-time alerts to pull liquidity.
+            * **Payment Processors:** Companies settling cross-border payments need assurance that $1 million sent is actually worth $1 million upon receipt.
+            * **Regulators:** They view stablecoins as "Systemically Important." A collapse of a major stablecoin could technically impact the real-world bond market, as stablecoin issuers are massive buyers of US Treasury bills.
+            """)
 
 else:
     st.warning("No data found. Please check your API key or try again later.")
