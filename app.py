@@ -39,7 +39,7 @@ st.markdown("""
     .risk-med { color: #ffa421; font-weight: bold; }
     .risk-low { color: #21c354; font-weight: bold; }
     .history-card {
-        background-color: #262730;
+        background-color: #ffffff;
         border: 1px solid #41444e;
         padding: 15px;
         border-radius: 10px;
