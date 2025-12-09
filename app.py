@@ -5,6 +5,7 @@ from datetime import datetime
 import time
 import plotly.graph_objects as go
 import numpy as np
+from sklearn.ensemble import IsolationForest # Added for ML Anomaly Detection
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -99,22 +100,26 @@ def classify_peg_status(price):
     else: # < 0.98 or > 1.02
         return "Hard Depeg"
 
-def detect_anomalies(df):
+def detect_anomalies_ml(df):
     """
-    Detects anomalies using a Rolling Z-Score.
-    An 'Anomaly' is defined as a price point > 3 standard deviations 
-    away from the 24-hour moving average.
+    Detects anomalies using the Isolation Forest algorithm (Machine Learning).
+    This is an unsupervised learning method that isolates anomalies 
+    instead of profiling normal data points.
     """
-    # Calculate Rolling Stats (24 hour window)
-    df['rolling_mean'] = df['close'].rolling(window=24).mean()
-    df['rolling_std'] = df['close'].rolling(window=24).std()
+    # Prepare data for Scikit-Learn (Needs 2D array)
+    X = df[['close']].values
     
-    # Calculate Z-Score: (Price - Mean) / StdDev
-    # We use a small epsilon to avoid division by zero
-    df['z_score'] = (df['close'] - df['rolling_mean']) / (df['rolling_std'] + 1e-8)
+    # Initialize Isolation Forest
+    # contamination='auto' allows the model to determine the % of outliers, 
+    # or we can set it to e.g., 0.01 (1%) if we want to be strict.
+    iso_forest = IsolationForest(contamination=0.01, random_state=42)
     
-    # Flag Anomalies (|Z-Score| > 3)
-    df['Is Anomaly'] = abs(df['z_score']) > 3
+    # Fit and Predict
+    # Returns -1 for outliers and 1 for inliers.
+    preds = iso_forest.fit_predict(X)
+    
+    # Convert to boolean (True if Anomaly)
+    df['Is Anomaly'] = preds == -1
     return df
 
 def process_advanced_metrics(df):
@@ -122,9 +127,6 @@ def process_advanced_metrics(df):
     df = df.sort_values('time').reset_index(drop=True)
     
     # 1. Volatility Metrics (Rolling Standard Deviations)
-    # We multiply by 100 to display as percentage if needed, but keeping raw for calculation is often safer.
-    # Here we perform rolling std dev of the *price*.
-    
     df['Hourly Change %'] = df['close'].pct_change() * 100
     df['Daily Volatility (24h)'] = df['close'].rolling(window=24).std()
     df['Weekly Volatility (7d)'] = df['close'].rolling(window=24*7).std()
@@ -133,8 +135,8 @@ def process_advanced_metrics(df):
     # 2. Stability Classification
     df['Peg Status'] = df['close'].apply(classify_peg_status)
     
-    # 3. Anomaly Detection
-    df = detect_anomalies(df)
+    # 3. Anomaly Detection (Now using ML)
+    df = detect_anomalies_ml(df)
     
     return df
 
@@ -147,7 +149,8 @@ st.markdown("Monitor the stability of major stablecoins against the USD.")
 with st.sidebar:
     st.header("Settings")
     selected_coin = st.selectbox("Select Stablecoin", ["USDT", "USDC"])
-    selected_days = st.slider("Timeframe (Days)", min_value=7, max_value=730, value=30)
+    # UPDATED: Increased max_value to 2000 days (~5.5 years)
+    selected_days = st.slider("Timeframe (Days)", min_value=7, max_value=2000, value=30)
     st.caption(f"Showing data for the last {selected_days} days.")
     
     st.markdown("---")
@@ -183,9 +186,6 @@ if not raw_df.empty:
             st.markdown(f"**Peg Risk Level**")
             st.markdown(f":{risk_color}[**{risk_label}**]", help=risk_desc)
 
-        # Data Logic for Depegs (Legacy visual logic)
-        depegs_visual = df[(df['low'] < 0.995) | (df['high'] > 1.005)].copy()
-
         # Charts
         st.subheader(f"{selected_coin} / USD Price Action")
         
@@ -209,15 +209,16 @@ if not raw_df.empty:
             line=dict(color='gray', width=1, dash='dash')
         ))
 
-        # 3. Anomaly Markers
-        if not depegs_visual.empty:
+        # 3. Anomaly Markers (Using ML results)
+        anomalies = df[df['Is Anomaly'] == True]
+        if not anomalies.empty:
             fig.add_trace(go.Scatter(
-                x=depegs_visual['time'],
-                y=depegs_visual['close'],
+                x=anomalies['time'],
+                y=anomalies['close'],
                 mode='markers',
-                name='Significant Deviation',
-                marker=dict(color='red', size=8, symbol='x'),
-                hovertemplate="<b>Deviation</b><br>Price: $%{y:.4f}<br>Date: %{x}<extra></extra>"
+                name='ML Detected Anomaly',
+                marker=dict(color='orange', size=6, symbol='circle-open', line=dict(width=2)),
+                hovertemplate="<b>ML Anomaly</b><br>Price: $%{y:.4f}<br>Date: %{x}<extra></extra>"
             ))
         
         # Improved Scaling logic
@@ -226,14 +227,20 @@ if not raw_df.empty:
         y_range_min = min(0.998, y_min - 0.001)
         y_range_max = max(1.002, y_max + 0.001)
 
+        # UPDATED: Added Range Slider and better axis configuration
         fig.update_layout(
-            height=500,
+            height=600,
             xaxis_title="Time",
             yaxis_title="Price (USD)",
             hovermode="x unified",
+            xaxis=dict(
+                rangeslider=dict(visible=True), # Yahoo Finance style slider
+                type="date"
+            ),
             yaxis=dict(
                 tickformat=".4f",
-                range=[y_range_min, y_range_max]
+                range=[y_range_min, y_range_max],
+                fixedrange=False # Allow vertical zooming if needed
             ),
             margin=dict(l=0, r=0, t=30, b=0),
             legend=dict(
@@ -309,7 +316,7 @@ if not raw_df.empty:
             )
             
         with col_filter2:
-            anomaly_filter = st.checkbox("Show Anomalies Only (Statistical ML)", value=False)
+            anomaly_filter = st.checkbox("Show Anomalies Only (Isolation Forest ML)", value=False)
 
         # Apply Filters
         filtered_df = df.copy()
@@ -323,7 +330,6 @@ if not raw_df.empty:
         st.markdown(f"**Showing {len(filtered_df)} rows** out of {len(df)} total records.")
 
         # --- Data Table ---
-        # Select and Rename columns for clean display
         display_df = filtered_df[[
             'time', 'close', 'high', 'low', 'volumeto', 
             'Hourly Change %', 'Daily Volatility (24h)', 'Peg Status', 'Is Anomaly'
@@ -339,6 +345,7 @@ if not raw_df.empty:
                 "volumeto": st.column_config.NumberColumn("Volume ($)", format="$%.0f"),
                 "Hourly Change %": st.column_config.NumberColumn("Change", format="%.4f%%"),
                 "Daily Volatility (24h)": st.column_config.NumberColumn("Volatility (24h)", format="%.5f"),
+                "Is Anomaly": st.column_config.CheckboxColumn("ML Anomaly", help="Detected by Isolation Forest"),
             },
             use_container_width=True,
             height=600
@@ -357,7 +364,7 @@ if not raw_df.empty:
         **Methodology Notes:**
         * **Volatility:** Calculated as the rolling standard deviation of the price over the specified window (24h, 7d, etc).
         * **Peg Status:** 'Stable' (±0.2%), 'Technical Depeg' (±0.5%), 'Soft Depeg' (±2.0%), 'Hard Depeg' (>2.0%).
-        * **Anomaly (ML):** Detected using a Z-Score algorithm. Data points > 3 standard deviations from the 24h moving average are flagged.
+        * **Anomaly (ML):** Detected using the **Isolation Forest** algorithm (Unsupervised Machine Learning). This model isolates anomalies by randomly partitioning the data; anomalies are isolated faster (fewer partitions) than normal data points.
         """)
 
     # --- TAB 4: Mechanics ---
