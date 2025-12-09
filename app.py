@@ -179,7 +179,7 @@ if not raw_df.empty:
     status_label, status_color = get_zscore_status(current_z)
     
     # Create Tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["Quant Dashboard", "Crisis Logs", "Raw Feed", "Risk Mechanics"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Quant Dashboard", "Hall of Pain (History)", "Raw Feed", "Stablecoin Mechanics"])
 
     # --- TAB 1: Dashboard ---
     with tab1:
@@ -336,29 +336,52 @@ if not raw_df.empty:
 
         st.plotly_chart(fig, use_container_width=True)
 
-    # --- TAB 2: Crisis Logs ---
+    # --- TAB 2: Hall of Pain (History) ---
     with tab2:
-        st.header("Crisis Post-Mortems")
-        st.markdown("If you don't study the failures, you're destined to repeat them.")
+        st.header("The Hall of Pain: Historic De-pegs")
+        st.markdown("A museum of the most significant stablecoin failures and crises in history.")
 
         # Event 1: Terra
-        st.subheader("1. The Death Spiral (UST)")
-        st.markdown("**May 2022** | **Structure:** Algorithmic")
-        col_hist1, col_hist2 = st.columns([3, 1])
+        st.subheader("1. The Terra (UST) Collapse")
+        st.markdown("**Date:** May 2022 | **Low:** $0.00")
+        col_hist1, col_hist2 = st.columns([2, 1])
         with col_hist1:
-            st.markdown("The algorithm was reflective. As LUNA crashed, the minting mechanism Hyperinflated supply. It wasn't a bank run; it was a code run.")
+            st.markdown("""
+            * **The Cause:** UST was an *algorithmic* stablecoin with no real reserves. It relied on a code-based relationship with its sister token, LUNA. When large withdrawals drained the liquidity pool, the algorithm entered a "death spiral," printing trillions of LUNA tokens to try and save the peg, causing both assets to go to zero.
+            * **Who was affected:** Retail investors lost life savings ($40B+ wiped out). It triggered the bankruptcy of major crypto funds like **Three Arrows Capital**, **Celsius**, and **Voyager**.
+            """)
         with col_hist2:
-            st.error("Wiped Out")
+            st.info("📉 **Impact:** Total ecosystem collapse. Triggered 'Crypto Winter' of 2022.")
+        st.markdown("[🔗 Read the post-mortem (Coindesk)](https://www.coindesk.com/learn/the-fall-of-terra-a-timeline-of-the-meteoric-rise-and-crash-of-ust-and-luna/)")
         st.divider()
 
-        # Event 2: USDC
-        st.subheader("2. The Banking Panic (USDC)")
-        st.markdown("**March 2023** | **Structure:** Fiat-Backed")
-        col_hist3, col_hist4 = st.columns([3, 1])
+        # Event 2: USDC / SVB
+        st.subheader("2. The Silicon Valley Bank Crisis (USDC)")
+        st.markdown("**Date:** March 2023 | **Low:** $0.87")
+        col_hist3, col_hist4 = st.columns([2, 1])
         with col_hist3:
-            st.markdown("Classic duration mismatch. Circle held cash in SVB. SVB bought long-dated bonds. Rates went up, bonds crashed, bank failed. Fed bailout saved the peg.")
+            st.markdown("""
+            * **The Cause:** Circle (issuer of USDC) revealed that **$3.3 Billion** of its cash reserves were stuck in Silicon Valley Bank (SVB) when regulators seized the failed bank.
+            * **Who was affected:** Panic sellers who dumped USDC at $0.88-$0.90 lost 10%+ instantly. DeFi protocols like **DAI** (which is backed by USDC) also de-pegged.
+            * **The Fix:** The US Federal Reserve stepped in to guarantee all SVB deposits, restoring confidence.
+            """)
         with col_hist4:
-            st.success("Restored")
+            st.warning("⚠️ **Lesson:** Even 'safe' centralized coins have banking counterparty risk.")
+        st.markdown("[🔗 Read the story (The Guardian)](https://www.theguardian.com/technology/2023/mar/11/usd-coin-depeg-silicon-valley-bank-collapse)")
+        st.divider()
+
+        # Event 3: Iron Finance
+        st.subheader("3. Iron Finance (The 'Mark Cuban' Rug)")
+        st.markdown("**Date:** June 2021 | **Low:** $0.00")
+        col_hist5, col_hist6 = st.columns([2, 1])
+        with col_hist5:
+            st.markdown("""
+            * **The Cause:** A classic "bank run" on a partially-collateralized stablecoin. As the price of the collateral token (TITAN) fell, users panicked and redeemed IRON, creating a negative feedback loop.
+            * **Who was affected:** Billionaire **Mark Cuban** famously lost money in this trade, calling for regulation afterwards. The token fell from $65 to near zero in hours.
+            """)
+        with col_hist6:
+            st.error("📉 **Impact:** First major high-profile failure of the 'partial-collateral' model.")
+        st.markdown("[🔗 Read Mark Cuban's reaction (Decrypt)](https://decrypt.co/73810/mark-cuban-hit-apparent-defi-rug-pull)")
             
     # --- TAB 3: Raw Data ---
     with tab3:
@@ -367,8 +390,79 @@ if not raw_df.empty:
         
     # --- TAB 4: Mechanics ---
     with tab4:
-        st.header("Risk Vectors")
-        st.info("Uncle's Rule #1: If the yield is >5% and you don't know where it comes from, YOU are the yield.")
+        st.header("Stablecoin Mechanics 101")
+        
+        with st.expander("1. What are Stablecoins?", expanded=True):
+            st.markdown("""
+            **Stablecoins** are cryptocurrencies designed to minimize volatility by pegging their value to a stable asset, typically a fiat currency like the US Dollar (USD) or a commodity like gold.
+            
+            They solve the primary hurdle of crypto adoption: **volatility**. While Bitcoin can swing 10% in a day, stablecoins aim to stay at exactly $1.00, making them useful for payments, settlement, and preserving wealth.
+            
+            **The Three Main Types:**
+            * **Fiat-Collateralized:** Backed 1:1 by reserves of cash and cash equivalents (Treasury bills) held in a bank. (e.g., USDT, USDC).
+            * **Crypto-Collateralized:** Backed by other cryptocurrencies, often over-collateralized to account for volatility. (e.g., DAI).
+            * **Algorithmic:** No reserves. Uses code and market incentives to mint/burn tokens to maintain the peg. (e.g., TerraUSD - *Failed*).
+            """)
+
+        with st.expander("2. The Titans: USDT vs. USDC", expanded=True):
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                st.markdown("### USDT (Tether)")
+                st.markdown("""
+                * **Launched:** 2014 by Tether Limited.
+                * **Status:** The "First Mover." It is the most dominant stablecoin by market cap and volume.
+                * **Reputation:** Historically controversial regarding the transparency of its reserves, though it has improved reporting recently.
+                * **Use Case:** Deepest liquidity. Used primarily for trading and arbitrage on offshore exchanges.
+                """)
+                
+            with col_b:
+                st.markdown("### USDC (USD Coin)")
+                st.markdown("""
+                * **Launched:** 2018 by Centre (Circle & Coinbase).
+                * **Status:** The "Compliance King." Designed for regulated markets.
+                * **Reputation:** High transparency. Monthly audits are published, and reserves are held in US-regulated financial institutions.
+                * **Use Case:** DeFi collateral, corporate treasury, and institutional settlement.
+                """)
+
+        with st.expander("3. What is De-pegging?", expanded=False):
+            st.markdown("""
+            **De-pegging** occurs when a stablecoin's price deviates from its target value (usually $1.00).
+            
+            ### Types of De-pegging:
+            
+            1.  **Soft De-peg (Temporary):**
+                * *Example:* Price hits $0.995 or $1.005.
+                * *Cause:* Normal market fluctuations. Someone sells a large amount (dumping), temporarily exhausting the buy-side liquidity. Arbitrage bots usually fix this in seconds.
+                
+            2.  **Structural De-peg (Crisis):**
+                * *Example:* Price drops to $0.88 (USDC in March 2023).
+                * *Cause:* Fundamental fear that the backing reserves are missing or inaccessible. For USDC, this happened when Silicon Valley Bank collapsed, freezing $3.3B of Circle's reserves.
+                
+            3.  **Algorithmic Death Spiral (Collapse):**
+                * *Example:* Price drops to $0.00 (TerraUSD in May 2022).
+                * *Cause:* Loss of confidence in the algorithm. Once the peg breaks, the mechanism to fix it actually creates hyperinflation of the sister token (LUNA), driving value to zero.
+            """)
+
+        with st.expander("4. How De-pegging Affects the Market", expanded=False):
+            st.markdown("""
+            When a major stablecoin wobbles, the ripple effects are massive:
+            
+            * **Arbitrage:** Traders rush to buy the coin at a discount (e.g., $0.98) hoping to redeem it for $1.00 later. This buying pressure often helps restore the peg.
+            * **Liquidity Crunch:** If traders fear a total collapse, they flee to "safety" (Bitcoin or Fiat), draining liquidity from DeFi pools.
+            * **Contagion:** Many crypto loans use stablecoins as collateral. If the price drops, these loans get liquidated, causing cascading sell-offs across the entire market (ETH, BTC).
+            * **Flight to Quality:** During the USDC de-peg, funds flowed massively into USDT. During USDT FUD (fear, uncertainty, doubt), funds flow to USDC.
+            """)
+
+        with st.expander("5. Who Cares? (Institutional Relevance)", expanded=False):
+            st.markdown("""
+            Why do fintechs and institutions monitor this data?
+            
+            * **High-Frequency Traders (HFT):** They profit from the millisecond discrepancies between $0.9999 and $1.0001.
+            * **Market Makers:** They provide liquidity to exchanges. If a stablecoin de-pegs, their inventory loses value, so they need real-time alerts to pull liquidity.
+            * **Payment Processors:** Companies settling cross-border payments need assurance that $1 million sent is actually worth $1 million upon receipt.
+            * **Regulators:** They view stablecoins as "Systemically Important." A collapse of a major stablecoin could technically impact the real-world bond market, as stablecoin issuers are massive buyers of US Treasury bills.
+            """)
 
 else:
     st.warning("Data feed disconnected. Check API endpoints.")
