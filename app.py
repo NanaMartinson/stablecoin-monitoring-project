@@ -147,7 +147,7 @@ with st.sidebar:
     selected_coin = st.selectbox("Asset Ticker", ["USDT", "USDC"], index=1)
     
     st.subheader("Technical Overlays")
-    chart_type = st.radio("Price Representation", ["Line", "Candlestick"], horizontal=True)
+    # Candlestick option removed as requested
     show_bb = st.checkbox("Show Bollinger Bands (2σ)", value=True, help="Visualizes volatility expansion/contraction.")
     
     selected_days = st.select_slider(
@@ -246,22 +246,12 @@ if not raw_df.empty:
                 hoverinfo='skip'
             ), row=1, col=1)
 
-        # 2. Price Trace
-        if chart_type == "Line":
-            fig.add_trace(go.Scatter(
-                x=df['time'], y=df['close'], 
-                mode='lines', name='Price', 
-                line=dict(color=price_color, width=2)
-            ), row=1, col=1)
-        else:
-            fig.add_trace(go.Candlestick(
-                x=df['time'],
-                open=df['open'], high=df['high'],
-                low=df['low'], close=df['close'],
-                name='OHLC',
-                increasing_line_color=price_color, 
-                decreasing_line_color='#DB4437'
-            ), row=1, col=1)
+        # 2. Price Trace - Forced to Line only, Width 1px
+        fig.add_trace(go.Scatter(
+            x=df['time'], y=df['close'], 
+            mode='lines', name='Price', 
+            line=dict(color=price_color, width=1) # 1px width
+        ), row=1, col=1)
 
         # Peg Line
         fig.add_trace(go.Scatter(
